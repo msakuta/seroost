@@ -226,17 +226,30 @@ fn entry() -> Result<(), ()> {
                         println!("{path} {rank}", path = path.display());
                     }
                 } else if use_binary_mode {
-                    let index_file = File::open(&index_path).map_err(|err| {
-                        eprintln!("ERROR: could not open index binary file {index_path}: {err}");
-                    })?;
+                    let (res, time) = measure_time(|| {
+                        let index_file = File::open(&index_path).map_err(|err| {
+                            eprintln!("ERROR: could not open index binary file {index_path}: {err}");
+                        })?;
 
-                    let model = InMemoryModel::deserialize(index_file).map_err(|err| {
-                        eprintln!("ERROR: could not deserialize binary index file {index_path}: {err}");
-                    })?;
+                        InMemoryModel::deserialize(index_file).map_err(|err| {
+                            eprintln!("ERROR: could not deserialize binary index file {index_path}: {err}");
+                        })
+                    });
 
-                    for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
-                        println!("{path} {rank}", path = path.display());
-                    }
+                    eprintln!("Load index file (binary): {time} s");
+
+                    let model = res?;
+
+                    let (res, time) = measure_time(|| {
+                        for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
+                            println!("{path} {rank}", path = path.display());
+                        }
+                        Ok(())
+                    });
+
+                    eprintln!("Search index: {time} s");
+
+                    res?;
                 } else {
                     let (res, time) = measure_time(|| {
                         let index_file = File::open(&index_path).map_err(|err| {
