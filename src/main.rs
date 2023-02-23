@@ -238,22 +238,35 @@ fn entry() -> Result<(), ()> {
                         println!("{path} {rank}", path = path.display());
                     }
                 } else {
-                    let index_file = File::open(&index_path).map_err(|err| {
-                        eprintln!("ERROR: could not open index file {index_path}: {err}");
-                    })?;
+                    let (res, time) = measure_time(|| {
+                        let index_file = File::open(&index_path).map_err(|err| {
+                            eprintln!("ERROR: could not open index file {index_path}: {err}");
+                        })?;
 
-                    let model = serde_json::from_reader::<_, InMemoryModel>(index_file).map_err(|err| {
-                        eprintln!("ERROR: could not parse index file {index_path}: {err}");
-                    })?;
+                        serde_json::from_reader::<_, InMemoryModel>(index_file).map_err(|err| {
+                            eprintln!("ERROR: could not parse index file {index_path}: {err}");
+                        })
+                    });
 
-                    for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
-                        println!("{path} {rank}", path = path.display());
-                    }
+                    eprintln!("Load index file (JSON): {time} s");
+
+                    let model = res?;
+
+                    let (res, time) = measure_time(|| {
+                        for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
+                            println!("{path} {rank}", path = path.display());
+                        }
+                        Ok(())
+                    });
+
+                    eprintln!("Search index: {time} s");
+
+                    res?;
                 }
                 Ok(())
             });
 
-            eprintln!("Seach time: {time}");
+            eprintln!("Total seach time: {time}");
 
             res?;
 
@@ -273,6 +286,22 @@ fn entry() -> Result<(), ()> {
                 });
 
                 eprintln!("Load index file (sqlite): {time} s");
+
+                server::start(&address, &res?)
+            } else if use_binary_mode {
+                let (res, time) = measure_time(|| {
+                    let index_file = File::open(&index_path).map_err(|err| {
+                        eprintln!("ERROR: could not open index file {index_path}: {err}");
+                    })?;
+
+                    let model = InMemoryModel::deserialize(index_file).map_err(|err| {
+                        eprintln!("ERROR: could not parse index file {index_path}: {err}");
+                    })?;
+
+                    Ok(model)
+                });
+
+                eprintln!("Load binary index file: {time} s");
 
                 server::start(&address, &res?)
             } else {
