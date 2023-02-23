@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::error::Error;
+use std::io::{Write, Read};
 use std::path::{PathBuf, Path};
 use serde::{Deserialize, Serialize};
 use std::result::Result;
@@ -165,6 +167,89 @@ type Docs = HashMap<PathBuf, Doc>;
 pub struct InMemoryModel {
     docs: Docs,
     df: DocFreq,
+}
+
+impl InMemoryModel {
+    pub fn serialize(&self, mut writer: impl Write) -> std::io::Result<()> {
+        writer.write_all(&self.docs.len().to_le_bytes())?;
+        for (path, doc) in &self.docs {
+            let path = path.as_os_str().to_string_lossy();
+            let path_bytes = path.as_bytes();
+            writer.write_all(&path_bytes.len().to_le_bytes())?;
+            writer.write_all(path_bytes)?;
+
+            writer.write_all(&doc.count.to_le_bytes())?;
+
+            writer.write_all(&doc.tf.len().to_le_bytes())?;
+            for (term, f) in &doc.tf {
+                let term_bytes = term.as_bytes();
+                writer.write_all(&term_bytes.len().to_le_bytes())?;
+                writer.write_all(term_bytes)?;
+
+                writer.write_all(&f.to_le_bytes())?;
+            }
+        }
+
+        writer.write_all(&self.df.len().to_le_bytes())?;
+        for (term, f) in &self.df {
+            let term_bytes = term.as_bytes();
+            writer.write_all(&term_bytes.len().to_le_bytes())?;
+            writer.write_all(term_bytes)?;
+
+            writer.write_all(&f.to_le_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub fn deserialize(mut reader: impl Read) -> Result<Self, Box<dyn Error>> {
+        let mut this = Self::default();
+
+        fn deserialize_string(reader: &mut impl Read) -> Result<String, Box<dyn Error>> {
+            let mut buf = [0u8; std::mem::size_of::<usize>()];
+            reader.read_exact(&mut buf)?;
+            let path_len = usize::from_le_bytes(buf);
+            let mut path_buf = vec![0u8; path_len];
+            reader.read_exact(&mut path_buf)?;
+            Ok(String::from_utf8(path_buf)?)
+        }
+
+        let mut buf = [0u8; std::mem::size_of::<usize>()];
+        reader.read_exact(&mut buf)?;
+        let num_docs = usize::from_le_bytes(buf);
+        for _ in 0..num_docs {
+            let path = deserialize_string(&mut reader)?;
+
+            reader.read_exact(&mut buf)?;
+            let count = usize::from_le_bytes(buf);
+
+            let mut tf = TermFreq::new();
+
+            reader.read_exact(&mut buf)?;
+            let tf_len = usize::from_le_bytes(buf);
+            for _ in 0..tf_len {
+                let term = deserialize_string(&mut reader)?;
+                reader.read_exact(&mut buf)?;
+                let f = usize::from_le_bytes(buf);
+                tf.insert(term, f);
+            }
+
+            this.docs.insert(PathBuf::from(path), Doc {
+                count,
+                tf
+            });
+        }
+
+        reader.read_exact(&mut buf)?;
+        let num_df = usize::from_le_bytes(buf);
+        for _ in 0..num_df {
+            let term = deserialize_string(&mut reader)?;
+            reader.read_exact(&mut buf)?;
+            let f = usize::from_le_bytes(buf);
+            this.df.insert(term, f);
+        }
+
+        Ok(this)
+    }
 }
 
 impl Model for InMemoryModel {

@@ -72,6 +72,21 @@ fn save_model_as_json(model: &InMemoryModel, index_path: &str) -> Result<(), ()>
     Ok(())
 }
 
+fn save_model_as_binary(model: &InMemoryModel, index_path: &str) -> Result<(), ()> {
+    println!("Saving binary {index_path}...");
+
+    let index_file = File::create(index_path).map_err(|err| {
+        eprintln!("ERROR: could not create index file {index_path}: {err}");
+    })?;
+
+    let writer = BufWriter::new(index_file);
+    model.serialize(writer).map_err(|err| {
+        eprintln!("ERROR: could not serialize index into file {index_path}: {err}");
+    })?;
+
+    Ok(())
+}
+
 fn add_folder_to_model(dir_path: &Path, model: &mut dyn Model, skipped: &mut usize) -> Result<(), ()> {
     let dir = fs::read_dir(dir_path).map_err(|err| {
         eprintln!("ERROR: could not open directory {dir_path} for indexing: {err}",
@@ -128,10 +143,12 @@ fn entry() -> Result<(), ()> {
 
     let mut subcommand = None;
     let mut use_sqlite_mode = false;
+    let mut use_binary_mode = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--sqlite" => use_sqlite_mode = true,
+            "--binary" => use_binary_mode = true,
             _ => {
                 subcommand = Some(arg);
                 break
@@ -169,6 +186,11 @@ fn entry() -> Result<(), ()> {
                     add_folder_to_model(Path::new(&dir_path), &mut model, &mut skipped)?;
                     // TODO: implement a special transaction object that implements Drop trait and commits the transaction when it goes out of scope
                     model.commit()?;
+                } else if use_binary_mode {
+                    let index_path = "index.bin";
+                    let mut model = Default::default();
+                    add_folder_to_model(Path::new(&dir_path), &mut model, &mut skipped)?;
+                    save_model_as_binary(&model, index_path)?;
                 } else {
                     let index_path = "index.json";
                     let mut model = Default::default();
@@ -196,25 +218,44 @@ fn entry() -> Result<(), ()> {
                 eprintln!("ERROR: no search query is provided {subcommand} subcommand");
             })?.chars().collect::<Vec<_>>();
 
-            if use_sqlite_mode {
-                let model = SqliteModel::open(Path::new(&index_path))?;
+            let (res, time) = measure_time(|| {
+                if use_sqlite_mode {
+                    let model = SqliteModel::open(Path::new(&index_path))?;
 
-                for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
-                    println!("{path} {rank}", path = path.display());
+                    for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
+                        println!("{path} {rank}", path = path.display());
+                    }
+                } else if use_binary_mode {
+                    let index_file = File::open(&index_path).map_err(|err| {
+                        eprintln!("ERROR: could not open index binary file {index_path}: {err}");
+                    })?;
+
+                    let model = InMemoryModel::deserialize(index_file).map_err(|err| {
+                        eprintln!("ERROR: could not deserialize binary index file {index_path}: {err}");
+                    })?;
+
+                    for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
+                        println!("{path} {rank}", path = path.display());
+                    }
+                } else {
+                    let index_file = File::open(&index_path).map_err(|err| {
+                        eprintln!("ERROR: could not open index file {index_path}: {err}");
+                    })?;
+
+                    let model = serde_json::from_reader::<_, InMemoryModel>(index_file).map_err(|err| {
+                        eprintln!("ERROR: could not parse index file {index_path}: {err}");
+                    })?;
+
+                    for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
+                        println!("{path} {rank}", path = path.display());
+                    }
                 }
-            } else {
-                let index_file = File::open(&index_path).map_err(|err| {
-                    eprintln!("ERROR: could not open index file {index_path}: {err}");
-                })?;
+                Ok(())
+            });
 
-                let model = serde_json::from_reader::<_, InMemoryModel>(index_file).map_err(|err| {
-                    eprintln!("ERROR: could not parse index file {index_path}: {err}");
-                })?;
+            eprintln!("Seach time: {time}");
 
-                for (path, rank) in model.search_query(&prompt)?.iter().take(20) {
-                    println!("{path} {rank}", path = path.display());
-                }
-            }
+            res?;
 
             Ok(())
         }
