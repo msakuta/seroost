@@ -227,9 +227,9 @@ fn entry() -> Result<(), ()> {
                     }
                 } else if use_binary_mode {
                     let (res, time) = measure_time(|| {
-                        let index_file = File::open(&index_path).map_err(|err| {
+                        let index_file = BufReader::new(File::open(&index_path).map_err(|err| {
                             eprintln!("ERROR: could not open index binary file {index_path}: {err}");
-                        })?;
+                        })?);
 
                         InMemoryModel::deserialize(index_file).map_err(|err| {
                             eprintln!("ERROR: could not deserialize binary index file {index_path}: {err}");
@@ -252,9 +252,9 @@ fn entry() -> Result<(), ()> {
                     res?;
                 } else {
                     let (res, time) = measure_time(|| {
-                        let index_file = File::open(&index_path).map_err(|err| {
+                        let index_file = BufReader::new(File::open(&index_path).map_err(|err| {
                             eprintln!("ERROR: could not open index file {index_path}: {err}");
-                        })?;
+                        })?);
 
                         serde_json::from_reader::<_, InMemoryModel>(index_file).map_err(|err| {
                             eprintln!("ERROR: could not parse index file {index_path}: {err}");
@@ -319,9 +319,9 @@ fn entry() -> Result<(), ()> {
                 server::start(&address, &res?)
             } else {
                 let (res, time) = measure_time(|| {
-                    let index_file = File::open(&index_path).map_err(|err| {
+                    let index_file = BufReader::new(File::open(&index_path).map_err(|err| {
                         eprintln!("ERROR: could not open index file {index_path}: {err}");
-                    })?;
+                    })?);
 
                     let model: InMemoryModel = serde_json::from_reader(index_file).map_err(|err| {
                         eprintln!("ERROR: could not parse index file {index_path}: {err}");
